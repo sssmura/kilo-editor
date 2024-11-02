@@ -1,6 +1,8 @@
 {
     "files.associations": {
         "*.css": "tailwindcss",
-        "unistd.h": "c"
+        "unistd.h": "c",
+        "*.tcc": "c",
+        "random": "c"
     }
 }
