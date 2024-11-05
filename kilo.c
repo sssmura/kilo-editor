@@ -12,12 +12,14 @@
 #define KILO_VERSION "0.0.1"
 
 // data
-typedef struct erow {
+typedef struct erow
+{
   int size;
   char *chars;
 } erow;
 
-enum editorkey {
+enum editorkey
+{
   ARROW_LEFT = 1000,
   ARROW_RIGHT,
   ARROW_UP,
@@ -29,7 +31,8 @@ enum editorkey {
   DEL_KEY
 };
 
-struct editorConfig {
+struct editorConfig
+{
   int cx;
   int cy;
   struct termios orig_termios;
@@ -42,17 +45,20 @@ struct editorConfig {
 struct editorConfig E;
 
 /*** terminal ***/
-void die(const char *s) {
+void die(const char *s)
+{
   write(STDOUT_FILENO, "\x1b[2J", 4);
   write(STDOUT_FILENO, "\x1b[H", 3);
   perror(s);
   exit(1);
 }
-void disableRawMode() {
+void disableRawMode()
+{
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
     die("tcsetattr");
 }
-void enableRawMode() {
+void enableRawMode()
+{
   if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1)
     die("tcgetattr");
   atexit(disableRawMode);
@@ -67,25 +73,32 @@ void enableRawMode() {
     die("tcsetattr");
 }
 
-int editorReadKey() {
+int editorReadKey()
+{
   int nread;
   char c;
-  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+  while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
+  {
     if (nread == -1 && errno != EAGAIN)
       die("read");
   }
-  if (c == '\x1b') {
+  if (c == '\x1b')
+  {
     char seq[3];
     if (read(STDIN_FILENO, &seq[0], 1) != 1)
       return '\x1b';
     if (read(STDIN_FILENO, &seq[1], 1) != 1)
       return '\x1b';
-    if (seq[0] == '[') {
-      if (seq[1] >= '0' && seq[1] <= '9') {
+    if (seq[0] == '[')
+    {
+      if (seq[1] >= '0' && seq[1] <= '9')
+      {
         if (read(STDOUT_FILENO, &seq[2], 1) != 1)
           return '\x1b';
-        if (seq[2] == '~') {
-          switch (seq[1]) {
+        if (seq[2] == '~')
+        {
+          switch (seq[1])
+          {
           case '1':
             return HOME_KEY;
           case '3':
@@ -102,8 +115,11 @@ int editorReadKey() {
             return END_KEY;
           }
         }
-      } else {
-        switch (seq[1]) {
+      }
+      else
+      {
+        switch (seq[1])
+        {
         case 'A':
           return ARROW_UP;
         case 'B':
@@ -118,8 +134,11 @@ int editorReadKey() {
           return END_KEY;
         }
       }
-    } else if (seq[0] == 'O') {
-      switch (seq[1]) {
+    }
+    else if (seq[0] == 'O')
+    {
+      switch (seq[1])
+      {
       case 'H':
         return HOME_KEY;
       case 'F':
@@ -127,18 +146,22 @@ int editorReadKey() {
       }
     }
     return '\x1b';
-  } else {
+  }
+  else
+  {
     return c;
   }
 }
 
-int getCursorPosition(int *rows, int *cols) {
+int getCursorPosition(int *rows, int *cols)
+{
   char buf[32];
   unsigned int i = 0;
   // CSI Ps n//Ps=6　CSl y;x R でカーソル位置を返す。
   if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4)
     return -1;
-  while (i < sizeof(buf) - 1) {
+  while (i < sizeof(buf) - 1)
+  {
     if (read(STDIN_FILENO, &buf[i], 1) != 1)
       break;
     if (buf[i] == 'R')
@@ -156,39 +179,60 @@ int getCursorPosition(int *rows, int *cols) {
   return 0;
 }
 
-int getWindowsSize(int *rows, int *cols) {
+int getWindowsSize(int *rows, int *cols)
+{
   struct winsize ws;
   // ioctr terminal制御　windowszieの取得
-  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
+  {
     // 標準出力に12バイト書き込んでいる。
     // 失敗した場合-1を返す
     if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12)
       return -1;
     return getCursorPosition(rows, cols);
-  } else {
+  }
+  else
+  {
     *cols = ws.ws_col;
     *rows = ws.ws_row;
     return 0;
   }
 }
 // file io
-void editorOpen() {
-  char *line = "Hello,world!";
-  ssize_t linelen = 13;
-  E.row.size = linelen;
-  E.row.chars = malloc(linelen + 1);
-  memcpy(E.row.chars, line, linelen);
-  E.row.chars[linelen] = '\0';
-  E.numrows = 1;
+void editorOpen(char *filename)
+{
+  FILE *fp = fopen(filename, "r");
+  if (!fp)
+    die("fopen");
+  char *line = NULL;
+  size_t linecap = 0;
+  ssize_t linelen;
+  linelen = getline(&line, &linecap, fp);
+  if (linelen != -1)
+  {
+    while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+    {
+      linelen--;
+    }
+    E.row.size = linelen;
+    E.row.chars = malloc(linelen + 1);
+    memcpy(E.row.chars, line, linelen);
+    E.row.chars[linelen] = '\0';
+    E.numrows = 1;
+  }
+  free(line);
+  fclose(fp);
 } // append buffer
-struct abuf {
+struct abuf
+{
   /* data */
   char *b;
   int len;
 };
-#define ABUF_INIT                                                              \
-  { NULL, 0 }
-void abAppend(struct abuf *ab, const char *s, int len) {
+#define ABUF_INIT \
+  {NULL, 0}
+void abAppend(struct abuf *ab, const char *s, int len)
+{
   // 動的にメモリ確保
   char *new = realloc(ab->b, ab->len + len);
   if (new == NULL)
@@ -202,33 +246,41 @@ void abAppend(struct abuf *ab, const char *s, int len) {
 }
 void abFree(struct abuf *ab) { free(ab->b); }
 /*** input ***/
-void editorMoveCursor(int key) {
-  switch (key) {
+void editorMoveCursor(int key)
+{
+  switch (key)
+  {
   case ARROW_LEFT:
-    if (E.cx != 0) {
+    if (E.cx != 0)
+    {
       E.cx--;
     }
     break;
   case ARROW_RIGHT:
-    if (E.cx != E.screencols - 1) {
+    if (E.cx != E.screencols - 1)
+    {
       E.cx++;
     }
     break;
   case ARROW_UP:
-    if (E.cy != 0) {
+    if (E.cy != 0)
+    {
       E.cy--;
     }
     break;
   case ARROW_DOWN:
-    if (E.cy != E.screenrows - 1) {
+    if (E.cy != E.screenrows - 1)
+    {
       E.cy++;
     }
     break;
   }
 }
-void editorProcessKeyPress() {
+void editorProcessKeyPress()
+{
   int c = editorReadKey();
-  switch (c) {
+  switch (c)
+  {
   case CTRL_KEY('q'):
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -241,13 +293,15 @@ void editorProcessKeyPress() {
     E.cy = E.screencols - 1;
     break;
   case PAGE_UP:
-  case PAGE_DOWN: {
+  case PAGE_DOWN:
+  {
     int times = E.screenrows;
-    while (times--) {
+    while (times--)
+    {
       editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
     }
-
-  } break;
+  }
+  break;
   case ARROW_LEFT:
   case ARROW_RIGHT:
   case ARROW_UP:
@@ -258,28 +312,37 @@ void editorProcessKeyPress() {
 }
 
 // output
-void editorDrawRows(struct abuf *ab) {
+void editorDrawRows(struct abuf *ab)
+{
   int y;
-  for (y = 0; y < E.screenrows; y++) {
-    if (y > E.numrows) {
-      if (y == E.screenrows / 3) {
+  for (y = 0; y < E.screenrows; y++)
+  {
+    if (y > E.numrows)
+    {
+      if (y == E.screenrows / 3)
+      {
         char welcome[80];
         int welcomelen = snprintf(welcome, sizeof(welcome),
                                   "Kilo editor -- version %s", KILO_VERSION);
         if (welcomelen > E.screencols)
           welcomelen = E.screencols;
         int padding = (E.screencols - welcomelen) / 2;
-        if (padding) {
+        if (padding)
+        {
           abAppend(ab, "~", 1);
           padding--;
         }
         while (padding--)
           abAppend(ab, " ", 1);
         abAppend(ab, welcome, welcomelen);
-      } else {
+      }
+      else
+      {
         abAppend(ab, "~", 1);
       }
-    } else {
+    }
+    else
+    {
       int len = E.row.size;
       if (len > E.screencols)
         len = E.screencols;
@@ -287,13 +350,15 @@ void editorDrawRows(struct abuf *ab) {
     }
     abAppend(ab, "\x1b[K", 3);
     // In last line,new line
-    if (y < E.screenrows - 1) {
+    if (y < E.screenrows - 1)
+    {
       abAppend(ab, "\r\n", 2);
     }
   }
 }
 
-void editorRefreshScreen() {
+void editorRefreshScreen()
+{
   struct abuf ab = ABUF_INIT;
   abAppend(&ab, "\x1b[?25l", 6);
   abAppend(&ab, "\x1b[H", 3);
@@ -308,19 +373,25 @@ void editorRefreshScreen() {
   abFree(&ab);
 }
 /*** init ***/
-void init_editor() {
+void init_editor()
+{
   E.cx = 0;
   E.cy = 0;
   E.numrows = 0;
   if (getWindowsSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
 }
-int main() {
+int main(int argc, char *argv[])
+{
 
   enableRawMode();
   init_editor();
-  editorOpen();
-  while (1) {
+  if (argc >= 2)
+  {
+    editorOpen(argv[1]);
+  }
+  while (1)
+  {
     editorRefreshScreen();
     editorProcessKeyPress();
   }
