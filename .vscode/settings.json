@@ -3,6 +3,11 @@
         "*.css": "tailwindcss",
         "unistd.h": "c",
         "*.tcc": "c",
-        "random": "c"
+        "random": "c",
+        "environments.h": "c",
+        "ctype.h": "c",
+        "types.h": "c",
+        "termios.h": "c",
+        "ioctl.h": "c"
     }
 }
