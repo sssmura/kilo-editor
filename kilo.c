@@ -204,13 +204,17 @@ void editorOpen(char *filename) {
   FILE *fp = fopen(filename, "r");
   if (!fp)
     die("fopen");
+  // nullポインタ
   char *line = NULL;
+  // lineの長さを保持するための変数
   size_t linecap = 0;
   ssize_t linelen;
   while ((linelen = getline(&line, &linecap, fp)) != -1) {
     while (linelen > 0 &&
-           (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+           // 改行の部分を覗いた長さを求めてる
+           (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
       linelen--;
+    }
     editorAppendRow(line, linelen);
   }
   free(line);
@@ -301,40 +305,55 @@ void ediotorScroll() {
   }
 }
 // output
+// 行を書いていく
+// y:現在の行index
+// 1
+// E.rowoff ユーザーがスクロールした文を加味したoffset
+// filerow 正味の先頭行
+// E.numsrow:ファイルの行数
+
 void editorDrawRows(struct abuf *ab) {
   int y;
-  for (y = 0; y < E.screenrows; y++) {
+  for (y = 0; y < E.screenrows; y++) { // 1スクリーンの最下部まで繰り返す
+    // 実際のファイルの何行目かを表す
     int filerow = y + E.rowoff;
-    if (filerow >= E.numrows) {
-      if (y >= E.numrows) {
-        if (E.numrows == 0 && y == E.screenrows / 3) {
-          char welcome[80];
-          int welcomelen = snprintf(welcome, sizeof(welcome),
-                                    "Kilo editor -- version %s", KILO_VERSION);
-          if (welcomelen > E.screencols)
-            welcomelen = E.screencols;
-          int padding = (E.screencols - welcomelen) / 2;
-          if (padding) {
-            abAppend(ab, "~", 1);
-            padding--;
-          }
-          while (padding--)
-            abAppend(ab, " ", 1);
-          abAppend(ab, welcome, welcomelen);
-        } else {
-          abAppend(ab, "~", 1);
+    // ファイルの最下部以下のとき
+    if (filerow >= E.numrows) { // ファイルの最下部より下からの範囲
+      //
+      if (E.numrows == 0 &&
+          y ==
+              E.screenrows /
+                  3) { // (ファイルの行数が0かつ=ファイルが存在しないor空ファイル)かつ(現在書き込みしようとしている
+        // 行が全体の1/3場合)にwelocome messageを表示する。
+        char welcome[80];
+        int welcomelen = snprintf(welcome, sizeof(welcome),
+                                  "Kilo editor -- version %s", KILO_VERSION);
+        if (welcomelen > E.screencols) // 列が横幅を超える場合
+          welcomelen = E.screencols;   // 長さを列の長さに落とす
+        int padding = (E.screencols - welcomelen) /
+                      2; // 列とmsgの長さの差をpaddingとする（左側だけなので1/2)
+        if (padding) {          // paddingがあるなら
+          abAppend(ab, "~", 1); // 左端にはチルダ（共通)
+          padding--;
         }
-      } else {
-        int len = E.row[filerow].size;
-        if (len > E.screencols)
-          len = E.screencols;
-        abAppend(ab, E.row[filerow].chars, len);
+        while (padding--)       // 左端を覗いたpaddingに空白
+          abAppend(ab, " ", 1); // 空白で埋める
+        abAppend(ab, welcome, welcomelen);
+      } else { // ファイルが存在する、または、列の1/3の位置でないとき、左端にはチルダだけ表示
+        abAppend(ab, "~", 1);
       }
-      abAppend(ab, "\x1b[K", 3);
-      // In last line,new line
-      if (y < E.screenrows - 1) {
-        abAppend(ab, "\r\n", 2);
-      }
+    } else { // ファイルの最下部までの範囲
+             // 単純にファイルを描画する
+      int len = E.row[filerow].size;
+      if (len > E.screencols)
+        len = E.screencols;
+      abAppend(ab, E.row[filerow].chars, len);
+    }
+    // カーソルの右側を削除
+    abAppend(ab, "\x1b[K", 3);
+    // In last line,new line
+    if (y < E.screenrows - 1) {
+      abAppend(ab, "\r\n", 2);
     }
   }
 }
@@ -342,15 +361,18 @@ void editorDrawRows(struct abuf *ab) {
 void editorRefreshScreen() {
   ediotorScroll();
   struct abuf ab = ABUF_INIT;
-  abAppend(&ab, "\x1b[?25l", 6);
-  abAppend(&ab, "\x1b[H", 3);
+  //
+  abAppend(&ab, "\x1b[?25l", 6); // カーソルを非表示を解除
+  abAppend(&ab, "\x1b[H", 3);    // 左上にカーソルを移動する
   editorDrawRows(&ab);
   char buf[32];
   // CSI cy+1;cx+1 H
+  // カーソルの位置にカーソルを表示
   snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
   abAppend(&ab, buf, strlen(buf));
   // CSI 25 h (カーソルを非表示)
   abAppend(&ab, "\x1b[?25h", 6);
+  // ここで実際に描写
   write(STDOUT_FILENO, ab.b, ab.len);
   abFree(&ab);
 }

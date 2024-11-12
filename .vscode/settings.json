@@ -8,6 +8,13 @@
         "ctype.h": "c",
         "types.h": "c",
         "termios.h": "c",
-        "ioctl.h": "c"
+        "ioctl.h": "c",
+        "bit": "cpp",
+        "concepts": "cpp",
+        "cstdio": "cpp",
+        "type_traits": "cpp",
+        "initializer_list": "cpp",
+        "new": "cpp",
+        "typeinfo": "cpp"
     }
 }
