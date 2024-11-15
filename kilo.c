@@ -15,12 +15,15 @@
 // うまく設計されていて、各アルファベットの下５ケタはそのアルファベットに関連する制御文字に対応している。
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define KILO_VERSION "0.0.1"
+#define KILO_TAB_STOP 8
 
 // data
 // これは行のデータを表している
 typedef struct erow {
   int size;
+  int rsize;
   char *chars;
+  char *render;
 } erow;
 // キーの列挙型だね
 enum editorkey {
@@ -37,12 +40,13 @@ enum editorkey {
 // ここにエディタの設定
 struct editorConfig {
   // カーソルの座標
-  int cx;
-  int cy;
+  int cx, cy;
+  int rx;
   struct termios orig_termios;
   int screenrows;
   int screencols;
   int rowoff;
+  int coloff;
   int numrows;
   erow *row;
 };
@@ -95,6 +99,7 @@ int editorReadKey() {
     if (read(STDIN_FILENO, &seq[1], 1) != 1)
       return '\x1b';
     if (seq[0] == '[') {
+      //
       if (seq[1] >= '0' && seq[1] <= '9') {
         if (read(STDOUT_FILENO, &seq[2], 1) != 1)
           return '\x1b';
@@ -186,6 +191,41 @@ int getWindowsSize(int *rows, int *cols) {
     return 0;
   }
 }
+int editorRowCxToRx(erow *row, int cx) {
+  int rx = 0;
+  int j;
+  for (j = 0; j < cx; j++) {
+    if (row->chars[j] == '\t') {
+      rx += KILO_TAB_STOP - (rx % KILO_TAB_STOP);
+    } else {
+      rx++;
+    }
+  }
+  return rx;
+}
+
+void editorUpdateRow(erow *row) {
+  int tabs = 0;
+  int j;
+  for (j = 0; j < row->size; j++)
+    if (row->chars[j] == '\t')
+      tabs++;
+  free(row->render);
+  row->render = malloc(row->size + tabs * (KILO_TAB_STOP - 1) + 1);
+  int idx = 0;
+  for (j = 0; j < row->size; j++) {
+    if (row->chars[j] == '\t') {
+      row->render[idx++] = ' ';
+      while (idx % KILO_TAB_STOP != 0)
+        row->render[idx++] = ' ';
+    } else {
+      row->render[idx++] = row->chars[j];
+    }
+  }
+  row->render[idx] = '\0';
+  row->rsize = idx;
+}
+
 void editorAppendRow(char *s, size_t len) {
   E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
   int at = E.numrows;
@@ -197,6 +237,10 @@ void editorAppendRow(char *s, size_t len) {
   memcpy(E.row[at].chars, s, len);
   // これが--2の理由か。。。
   E.row[at].chars[len] = '\0';
+
+  E.row[at].rsize = 0;
+  E.row[at].render = NULL;
+  editorUpdateRow(&E.row[at]);
   E.numrows++;
 }
 // file io
@@ -243,16 +287,27 @@ void abAppend(struct abuf *ab, const char *s, int len) {
 }
 void abFree(struct abuf *ab) { free(ab->b); }
 /*** input ***/
+// E.cx/E.cyを変更
+// editorProcessKeyPressで呼び出される
 void editorMoveCursor(int key) {
+  erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+
   switch (key) {
   case ARROW_LEFT:
     if (E.cx != 0) {
       E.cx--;
+    } else if (E.cy > 0) {
+      E.cy--;
+      E.cx = E.row[E.cy].size;
     }
     break;
+    // 空行に位置するとき、何もしない。
   case ARROW_RIGHT:
-    if (E.cx != E.screencols - 1) {
+    if (row && E.cx < row->size) {
       E.cx++;
+    } else if (row && E.cx == row->size) {
+      E.cy++;
+      E.cx = 0;
     }
     break;
   case ARROW_UP:
@@ -265,6 +320,12 @@ void editorMoveCursor(int key) {
       E.cy++;
     }
     break;
+  }
+  row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+  int rowlen = row ? row->size : 0;
+  // 上下移動で行の末尾より右側に移動した場合、末尾に移動する。
+  if (E.cx > rowlen) {
+    E.cx = rowlen;
   }
 }
 void editorProcessKeyPress() {
@@ -283,6 +344,14 @@ void editorProcessKeyPress() {
     break;
   case PAGE_UP:
   case PAGE_DOWN: {
+    if (c == PAGE_UP) {
+      E.cy = E.rowoff;
+    } else if (c == PAGE_DOWN) {
+      E.cy = E.rowoff + E.screenrows - 1;
+      if (E.cy > E.numrows) {
+        E.cy = E.numrows;
+      }
+    }
     int times = E.screenrows;
     while (times--) {
       editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
@@ -296,12 +365,31 @@ void editorProcessKeyPress() {
     break;
   }
 }
+// E.rx/cx/cyの値によって
+// E.rowoff/coloffを変更する。
+// E.cx//row[]に対応したindex tabでも一文字
+// E.rx //tabなども考慮してスクリーン上の位置を表す位置
 void ediotorScroll() {
+  E.rx = E.cx;
+  // 空行ではない場合
+  if (E.cy < E.numrows) {
+    E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
+  }
+  // 上にいった場合は上にスクロールする。
   if (E.cy < E.rowoff) {
     E.rowoff = E.cy;
   }
-  if (E.cy >= E.rowoff + E.screenrows) {
+  // E.cyが下にはみ出す場合
+  if (E.cy - E.rowoff >= E.screenrows) {
+    // その文だけスクロールする。
     E.rowoff = E.cy - E.screenrows + 1;
+  }
+
+  if (E.rx < E.coloff) {
+    E.coloff = E.rx;
+  }
+  if (E.rx - E.coloff >= E.screencols) {
+    E.coloff = E.rx - E.screencols + 1;
   }
 }
 // output
@@ -311,7 +399,7 @@ void ediotorScroll() {
 // E.rowoff ユーザーがスクロールした文を加味したoffset
 // filerow 正味の先頭行
 // E.numsrow:ファイルの行数
-
+// abを受取り、E.の内容を反映させる。
 void editorDrawRows(struct abuf *ab) {
   int y;
   for (y = 0; y < E.screenrows; y++) { // 1スクリーンの最下部まで繰り返す
@@ -344,10 +432,12 @@ void editorDrawRows(struct abuf *ab) {
       }
     } else { // ファイルの最下部までの範囲
              // 単純にファイルを描画する
-      int len = E.row[filerow].size;
+      int len = E.row[filerow].rsize - E.coloff;
+      if (len < 0)
+        len = 0;
       if (len > E.screencols)
         len = E.screencols;
-      abAppend(ab, E.row[filerow].chars, len);
+      abAppend(ab, &E.row[filerow].render[E.coloff], len);
     }
     // カーソルの右側を削除
     abAppend(ab, "\x1b[K", 3);
@@ -362,13 +452,15 @@ void editorRefreshScreen() {
   ediotorScroll();
   struct abuf ab = ABUF_INIT;
   //
-  abAppend(&ab, "\x1b[?25l", 6); // カーソルを非表示を解除
+  abAppend(&ab, "\x1b[?25l", 6); // カーソルを非表示を解除sfa
   abAppend(&ab, "\x1b[H", 3);    // 左上にカーソルを移動する
   editorDrawRows(&ab);
   char buf[32];
   // CSI cy+1;cx+1 H
   // カーソルの位置にカーソルを表示
-  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+  // このカーソル表示は現在のウィンドウから計算されるのでこちら側からの調整は跡からできないため、ここで適切な相対位置を設定
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1,
+           (E.rx - E.coloff) + 1);
   abAppend(&ab, buf, strlen(buf));
   // CSI 25 h (カーソルを非表示)
   abAppend(&ab, "\x1b[?25h", 6);
@@ -380,7 +472,9 @@ void editorRefreshScreen() {
 void initEditor() {
   E.cx = 0;
   E.cy = 0;
+  E.rx = 0;
   E.rowoff = 0;
+  E.coloff = 0;
   E.numrows = 0;
   E.row = NULL;
   if (getWindowsSize(&E.screenrows, &E.screencols) == -1)
@@ -395,6 +489,9 @@ int main(int argc, char *argv[]) {
   }
   while (1) {
     editorRefreshScreen();
+    // keyを読み込んで操作する。
+    //->(key=editorReadKey editorMoveCursor(key))
+    // editorMoveCursorはE.cx/cyを操作する。
     editorProcessKeyPress();
   }
 
