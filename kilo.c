@@ -29,6 +29,7 @@ typedef struct erow {
 } erow;
 // キーの列挙型だね
 enum editorkey {
+  BACK_SPACE = 127,
   ARROW_LEFT = 1000,
   ARROW_RIGHT,
   ARROW_UP,
@@ -39,6 +40,7 @@ enum editorkey {
   END_KEY,
   DEL_KEY
 };
+
 // ここにエディタの設定
 struct editorConfig {
   // カーソルの座標
@@ -196,6 +198,8 @@ int getWindowsSize(int *rows, int *cols) {
     return 0;
   }
 }
+/*** row operations ***/
+// カーソルなどの詳細は忘れるが、row操作の詳細は記述される
 int editorRowCxToRx(erow *row, int cx) {
   int rx = 0;
   int j;
@@ -248,7 +252,53 @@ void editorAppendRow(char *s, size_t len) {
   editorUpdateRow(&E.row[at]);
   E.numrows++;
 }
+// E.rowに挿入
+
+void editorRowInsertChar(erow *row, int at, int c) {
+  if (at < 0 || at > row->size) {
+    // 末尾
+    at = row->size;
+  }
+  // 末尾とnull byteの領域を新たに確保する。
+  row->chars = realloc(row->chars, row->size + 2);
+  // null byte用の領域も合わせてコピー
+  memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+  // nullの領域はサイズに加味しない
+  row->size++;
+  row->chars[at] = c;
+  // rsizeとrender を更新する
+  editorUpdateRow(row);
+}
+
+// editor
+// operations(row操作の詳細を忘れるが、カーソルに関しては詳細に記述される)
+
+void editorInsertChar(int c) {
+  if (E.cy == E.numrows) {
+    editorAppendRow("", 0);
+  }
+  editorRowInsertChar(&E.row[E.cy], E.cx, c);
+  E.cx++;
+}
+
 // file io
+char *ediotrRowsToString(int *buflen) {
+  int totlen = 0;
+  int j;
+  for (j = 0; j < E.numrows; j++) {
+    totlen += E.row[j].size + 1;
+  }
+  *buflen = totlen;
+  char *buf = malloc(totlen);
+  char *p = buf;
+  for (j = 0; j < E.numrows; j++) {
+    memcpy(p, E.row[j].chars, E.row[j].size);
+    p += E.row[j].size;
+    *p = '\n';
+    p++;
+  }
+  return buf;
+}
 void editorOpen(char *filename) {
   free(E.filename);
   E.filename = strdup(filename);
@@ -338,6 +388,9 @@ void editorMoveCursor(int key) {
 void editorProcessKeyPress() {
   int c = editorReadKey();
   switch (c) {
+  case '\r':
+    // todo
+    break;
   case CTRL_KEY('q'):
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -350,6 +403,11 @@ void editorProcessKeyPress() {
     if (E.cy < E.numrows) {
       E.cx = E.row[E.cy].size;
     }
+    break;
+  case BACK_SPACE:
+  case CTRL_KEY('h'):
+  case DEL_KEY:
+    // todo
     break;
   case PAGE_UP:
   case PAGE_DOWN: {
@@ -371,6 +429,12 @@ void editorProcessKeyPress() {
   case ARROW_UP:
   case ARROW_DOWN:
     editorMoveCursor(c);
+    break;
+  default:
+  case CTRL_KEY('l'):
+  case '\x1b':
+    break;
+    editorInsertChar(c);
     break;
   }
 }
