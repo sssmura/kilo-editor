@@ -65,6 +65,7 @@ struct editorConfig E;
 // prototypes
 
 void editorSetStatusMessage(const char *fmt, ...);
+void editorRefeshScreen();
 
 /*** terminal ***/
 // エラーハンドラ
@@ -241,9 +242,12 @@ void editorUpdateRow(erow *row) {
   row->rsize = idx;
 }
 
-void editorAppendRow(char *s, size_t len) {
+void editorInsertRow(int at, char *s, size_t len) {
+  if (at > E.numrows || at < 0)
+    return;
   E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
-  int at = E.numrows;
+  memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
+  E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
   // 最下の列の長さを取得している。// そもそもここには存在しないはずでは？
   E.row[at].size = len;
   // それにプラス1をしてメモリ確保？？--2
@@ -269,13 +273,13 @@ void editorDelRow(int at) {
     return;
   editorFreeRow(&E.row[at]);
   memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+  E.numrows--;
   E.dirty++;
 }
 // E.rowに挿入
 
 void editorRowInsertChar(erow *row, int at, int c) {
   if (at < 0 || at > row->size) {
-    // 末尾
     at = row->size;
   }
   // 末尾とnull byteの領域を新たに確保する。
@@ -286,6 +290,29 @@ void editorRowInsertChar(erow *row, int at, int c) {
   row->size++;
   row->chars[at] = c;
   // rsizeとrender を更新する
+  editorUpdateRow(row);
+  E.dirty++;
+}
+void editorInsertNewline() {
+  if (E.cx == 0) {
+    editorInsertRow(E.cy, "", 0);
+  } else {
+    erow *row = &E.row[E.cy];
+    editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
+    // editorInsertRowでrowがreallocされるため再びポインタを取得
+    row = &E.row[E.cy];
+    row->size = E.cx;
+    row->chars[row->size] = '\0';
+    editorUpdateRow(row);
+  }
+  E.cy++;
+  E.cx = 0;
+}
+void editorRowAppendString(erow *row, char *s, size_t len) {
+  row->chars = realloc(row->chars, row->size + len + 1);
+  memcpy(&row->chars[row->size], s, len);
+  row->size += len;
+  row->chars[len] = '\0';
   editorUpdateRow(row);
   E.dirty++;
 }
@@ -302,7 +329,7 @@ void editorRowDelChar(erow *row, int at) {
 
 void editorInsertChar(int c) {
   if (E.cy == E.numrows) {
-    editorAppendRow("", 0);
+    editorInsertRow(E.numrows, "", 0);
   }
   editorRowInsertChar(&E.row[E.cy], E.cx, c);
   E.cx++;
@@ -310,10 +337,17 @@ void editorInsertChar(int c) {
 void editorDelChar() {
   if (E.cy == E.numrows)
     return;
+  if (E.cy == 0 && E.cx == 0)
+    return;
   erow *row = &E.row[E.cy];
   if (E.cx > 0) {
     editorRowDelChar(row, E.cx - 1);
     E.cx--;
+  } else {
+    E.cx = E.row[E.cy - 1].size;
+    editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+    editorDelRow(E.cy);
+    E.cy--;
   }
 }
 // file io
@@ -352,7 +386,7 @@ void editorOpen(char *filename) {
            (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
       linelen--;
     }
-    editorAppendRow(line, linelen);
+    editorInsertRow(E.numrows, line, linelen);
     E.dirty = 0;
   }
   free(line);
@@ -402,6 +436,17 @@ void abAppend(struct abuf *ab, const char *s, int len) {
 }
 void abFree(struct abuf *ab) { free(ab->b); }
 /*** input ***/
+void *editorPrompt(char *prompt) {
+  size_t bufsize = 128;
+  char *buf = malloc(bufsize);
+
+  size_t buflen = 0;
+  while (1) {
+    editorSetStatusMessage(prompt, buf);
+    editorRefeshScreen();
+  }
+}
+
 // E.cx/E.cyを変更
 // editorProcessKeyPressで呼び出される
 void editorMoveCursor(int key) {
@@ -448,7 +493,7 @@ void editorProcessKeyPress() {
   int c = editorReadKey();
   switch (c) {
   case '\r':
-    // todo
+    editorInsertNewline();
     break;
   case CTRL_KEY('q'):
     if (E.dirty && quit_times > 0) {
