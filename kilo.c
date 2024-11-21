@@ -65,7 +65,8 @@ struct editorConfig E;
 // prototypes
 
 void editorSetStatusMessage(const char *fmt, ...);
-void editorRefeshScreen();
+void editorRefreshScreen();
+char *editorPrompt(char *prompt);
 
 /*** terminal ***/
 // エラーハンドラ
@@ -299,7 +300,6 @@ void editorInsertNewline() {
   } else {
     erow *row = &E.row[E.cy];
     editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
-    // editorInsertRowでrowがreallocされるため再びポインタを取得
     row = &E.row[E.cy];
     row->size = E.cx;
     row->chars[row->size] = '\0';
@@ -312,7 +312,7 @@ void editorRowAppendString(erow *row, char *s, size_t len) {
   row->chars = realloc(row->chars, row->size + len + 1);
   memcpy(&row->chars[row->size], s, len);
   row->size += len;
-  row->chars[len] = '\0';
+  row->chars[row->size] = '\0';
   editorUpdateRow(row);
   E.dirty++;
 }
@@ -337,7 +337,7 @@ void editorInsertChar(int c) {
 void editorDelChar() {
   if (E.cy == E.numrows)
     return;
-  if (E.cy == 0 && E.cx == 0)
+  if (E.cx == 0 && E.cy == 0)
     return;
   erow *row = &E.row[E.cy];
   if (E.cx > 0) {
@@ -393,6 +393,13 @@ void editorOpen(char *filename) {
   fclose(fp);
 }
 void editorSave() {
+  if (E.filename == NULL) {
+    E.filename = editorPrompt("Save as : %s (ESC to cancel)");
+    if (E.filename == NULL) {
+      editorSetStatusMessage("Save aborted");
+      return;
+    }
+  }
   char *filepath = E.filename;
   if (filepath == NULL)
     return;
@@ -436,14 +443,35 @@ void abAppend(struct abuf *ab, const char *s, int len) {
 }
 void abFree(struct abuf *ab) { free(ab->b); }
 /*** input ***/
-void *editorPrompt(char *prompt) {
+char *editorPrompt(char *prompt) {
   size_t bufsize = 128;
   char *buf = malloc(bufsize);
 
   size_t buflen = 0;
   while (1) {
     editorSetStatusMessage(prompt, buf);
-    editorRefeshScreen();
+    editorRefreshScreen();
+    int c = editorReadKey();
+    if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACK_SPACE) {
+      if (buflen != 0)
+        buf[--buflen] = '\0';
+    } else if (c == '\x1b') {
+      editorSetStatusMessage("");
+      free(buf);
+      return NULL;
+    } else if (c == '\r') {
+      if (buflen != 0) {
+        editorSetStatusMessage("");
+        return buf;
+      }
+    } else if (!iscntrl(c) && c < 128) {
+      if (buflen == bufsize - 1) {
+        bufsize *= 2;
+        buf = realloc(buf, bufsize);
+      }
+      buf[buflen++] = c;
+      buf[buflen] = '\0';
+    }
   }
 }
 
